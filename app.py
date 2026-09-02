@@ -139,7 +139,8 @@ if uploaded_file is not None:
 
     if st.button("بدء التفريغ والاستخراج"):
         with st.spinner("🎤 جاري الاستماع للصوت وتحويله إلى نص..."):
-            model = whisper.load_model("base")
+            # استخدام نموذج tiny الخفيف لتجنب حظر المعالج
+            model = whisper.load_model("tiny")
             result = model.transcribe("temp_audio_file", language="ar")
 
         with st.spinner("📊 جاري ترتيب البيانات وبناء ملف Excel..."):
