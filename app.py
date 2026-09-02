@@ -1,10 +1,10 @@
 import os
 import re
+from groq import Groq
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
-import whisper
 
 # ضبط واجهة التطبيق
 st.set_page_config(
@@ -127,33 +127,47 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
 st.title("🚗 تطبيق تفريغ لوحات السيارات")
 st.write("ارفعي ملف التسجيل الصوتي للحصول على ملف Excel جاهز ومنسق.")
 
-# السماح باختيار أي نوع ملف صوتي أو ريكورد من الجوال
+# طلب مفتاح Groq API من الإعدادات أو إدخاله
+groq_api_key = st.text_input("أدخلي مفتاح Groq API الخاص بك:", type="password")
+
 uploaded_file = st.file_uploader(
     "اختاري ملف الصوت أو الريكورد من الجوال:", type=None
 )
 
-if uploaded_file is not None:
-    # حفظ التسجيل مؤقتاً للمعالجة
-    with open("temp_audio_file", "wb") as f:
+if uploaded_file is not None and groq_api_key:
+    with open("temp_audio_file.m4a", "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري الاستماع للصوت وتحويله إلى نص..."):
-            # استخدام نموذج tiny الخفيف لتجنب حظر المعالج
-            model = whisper.load_model("tiny")
-            result = model.transcribe("temp_audio_file", language="ar")
+        with st.spinner("🎤 جاري تفريغ الصوت سحابياً..."):
+            try:
+                client = Groq(api_key=groq_api_key)
+                with open("temp_audio_file.m4a", "rb") as file:
+                    transcription = client.audio.transcriptions.create(
+                        file=("audio.m4a", file.read()),
+                        model="whisper-large-v3",
+                        language="ar",
+                        response_format="text",
+                    )
+                raw_text = transcription
+            except Exception as e:
+                st.error(f"حدث خطأ: {e}")
+                raw_text = ""
 
-        with st.spinner("📊 جاري ترتيب البيانات وبناء ملف Excel..."):
-            df = process_text_data(result["text"])
-            excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
+        if raw_text:
+            with st.spinner("📊 جاري ترتيب البيانات وبناء ملف Excel..."):
+                df = process_text_data(raw_text)
+                excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
-        st.success("✅ تمت المعالجة بنجاح!")
-        st.dataframe(df)
+            st.success("✅ تمت المعالجة بنجاح!")
+            st.dataframe(df)
 
-        with open(excel_file, "rb") as f:
-            st.download_button(
-                label="📥 تحميل ملف Excel الجاهز",
-                data=f,
-                file_name="تفريغ_اللوحات.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            with open(excel_file, "rb") as f:
+                st.download_button(
+                    label="📥 تحميل ملف Excel الجاهز",
+                    data=f,
+                    file_name="تفريغ_اللوحات.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+elif uploaded_file is not None and not groq_api_key:
+    st.warning("⚠️الرجاء إدخال مفتاح Groq API في الحقل بالأعلى لكي يتم بدء التفريغ.")
