@@ -1,4 +1,5 @@
 streamlit
-git+https://github.com/openai/whisper.git
+openai-whisper
 openpyxl
 pandas
+setuptools
