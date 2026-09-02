@@ -127,19 +127,20 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
 st.title("🚗 تطبيق تفريغ لوحات السيارات")
 st.write("ارفعي ملف التسجيل الصوتي للحصول على ملف Excel جاهز ومنسق.")
 
+# السماح باختيار أي نوع ملف صوتي أو ريكورد من الجوال
 uploaded_file = st.file_uploader(
-    "اختاري ملف الصوت (MP3, WAV, M4A):", type=["mp3", "wav", "m4a"]
+    "اختاري ملف الصوت أو الريكورد من الجوال:", type=None
 )
 
 if uploaded_file is not None:
-    # حفظ الصوت المؤقت
-    with open("temp_audio.m4a", "wb") as f:
+    # حفظ التسجيل مؤقتاً للمعالجة
+    with open("temp_audio_file", "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
         with st.spinner("🎤 جاري الاستماع للصوت وتحويله إلى نص..."):
             model = whisper.load_model("base")
-            result = model.transcribe("temp_audio.m4a", language="ar")
+            result = model.transcribe("temp_audio_file", language="ar")
 
         with st.spinner("📊 جاري ترتيب البيانات وبناء ملف Excel..."):
             df = process_text_data(result["text"])
