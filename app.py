@@ -12,99 +12,101 @@ st.set_page_config(
 )
 
 
-# 1. تنظيف حروف وأرقام السيارة (العمود A) - فصل الحروف عن الأرقام ودمجها بدقة
-def normalize_plate(text):
-    # إزالة الكلمات المفتاحية للملاحظات لكي لا تختلط برقم السيارة
-    cleaned_text = re.sub(
-        r"(نقل|تاكسي|حرف\s*الباء|باء|حرف\s*الميم|ميم|حرف\s*الفاء|فاء|حرف\s*الراء|راء|مربع|شقق|موقع|\d+)",
+# 1. استخراج وتنقية حروف وأرقام اللوحة (العمود الأول - أقصى اليمين)
+def extract_plate(text):
+    # إزالة كلمات المواقع والملاحظات الشائعة لترك الحروف والأرقام فقط
+    cleaned = re.sub(
+        r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء)",
         " ",
         text,
     )
 
-    cleaned_text = re.sub(r"[أإآ]", "ا", cleaned_text)
-    cleaned_text = cleaned_text.replace("هـ", "ه")
+    # توحيد الأشكال (الألفات والهاءات)
+    cleaned = re.sub(r"[أإآ]", "ا", cleaned)
+    cleaned = cleaned.replace("هـ", "ه")
 
-    # استخراج الحروف العربية فقط ودمجها
-    letters_list = re.findall(r"[\u0600-\u06FF]", cleaned_text)
-    letters = "".join(letters_list)
-
-    # استخراج الأرقام وحدها من النص الأصلي
-    numbers_list = re.findall(r"\d+", text)
-    numbers = "".join(numbers_list)
+    # استخراج الحروف العربية المفردة وتكوينها
+    letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned))
+    # استخراج الأرقام
+    numbers = "".join(re.findall(r"\d+", text))
 
     if letters or numbers:
         return letters + numbers
     return None
 
 
-# 2. استخراج التصنيفات والملاحظات بدقة (العمود C)
-def parse_classification(text):
+# 2. استخراج التصنيفات والملاحظات بدقة (العمود الثالث)
+def extract_classification(text):
     notes = []
     if "نقل" in text:
         notes.append("ن")
     if "تاكسي" in text:
         notes.append("ت")
-    if "حرف الباء" in text or "باء" in text:
+    if "باء" in text or "حرف الباء" in text:
         notes.append("ب")
-    if "حرف الميم" in text or "ميم" in text:
+    if "ميم" in text or "حرف الميم" in text:
         notes.append("م")
-    if "حرف الفاء" in text or "فاء" in text:
+    if "فاء" in text or "حرف الفاء" in text:
         notes.append("ف")
-    if "حرف الراء" in text or "راء" in text:
+    if "راء" in text or "حرف الراء" in text:
         notes.append("ر")
     if "مربع" in text:
         notes.append("مربع")
     if "شقق" in text:
         notes.append("شقق")
 
-    return " ".join(notes) if notes else None
+    return " ".join(notes) if notes else ""
 
 
-# 3. معالجة النص المفرغ وترتيب البيانات صفاً بصَف
+# 3. معالجة النص المفرغ وترتيب البيانات حسب الضوابط الدقيقة
 def process_text_data(raw_text):
     rows = []
-    current_site = None
-    site_written_for_group = False
+    current_site = ""
+    last_written_site = None
 
-    # تقسيم النص بناءً على الأسطر أو الجمل المنطوقة
     lines = raw_text.split("\n")
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
-        # فحص وجود رقم الموقع
+        # البحث عن رقم الموقع الجديد
         site_match = re.search(r"موقع\s*(?:رقم)?\s*(\d+)", line)
         if site_match:
             current_site = site_match.group(1)
-            site_written_for_group = False
+            last_written_site = (
+                None  # لإعادة كتابة الموقع الجديد أول سيارة فقط
+            )
             continue
 
-        plate = normalize_plate(line)
+        # التحقق إذا كانت السطر يحتوي على سيارة/لوحة
+        plate = extract_plate(line)
         if plate:
-            classification = parse_classification(line)
+            classification = extract_classification(line)
 
-            site_val = None
-            if current_site and not site_written_for_group:
+            # كتابة رقم الموقع مرة واحدة فقط لأول سيارة في الموقع
+            site_val = ""
+            if current_site and last_written_site != current_site:
                 site_val = current_site
-                site_written_for_group = True
+                last_written_site = current_site  # عدم تكراره للسيارات التالية
 
             rows.append({
                 "plate": plate,
-                "site": site_val if site_val else "",
-                "classification": classification if classification else None,
+                "site": site_val,
+                "classification": classification,
             })
 
     return pd.DataFrame(rows)
 
 
-# 4. بناء ملف Excel المنسق (بالعربية واتجاه RTL)
+# 4. بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة بالعربي)
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "تفريغ اللوحات"
     ws.views.sheetView[0].rightToLeft = True
 
+    # الأعمدة بالترتيب الصحيح من اليمين لليسار
     headers = ["حروف وأرقام السيارة", "رقم الموقع", "التصنيف والملاحظات"]
     ws.append(headers)
 
@@ -162,7 +164,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بدقة..."):
+        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بدقة عالية..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -178,7 +180,7 @@ if uploaded_file is not None and groq_api_key:
                 raw_text = ""
 
         if raw_text:
-            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
+            with st.spinner("📊 جاري فرز اللوحات والمواقع وتجهيز ملف Excel..."):
                 df = process_text_data(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
