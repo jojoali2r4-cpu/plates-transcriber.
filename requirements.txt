@@ -1,4 +1,4 @@
 streamlit
-groq
+google-genai
 pandas
 openpyxl
