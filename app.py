@@ -1,6 +1,5 @@
 import os
 import re
-from google import genai
 from groq import Groq
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -13,46 +12,41 @@ st.set_page_config(
 )
 
 
-# دالة ذكية تستخدم Google Gemini أو Groq لتحليل النص وتنسيق اللوحات بدقة
-def parse_text_with_ai(raw_text, api_key, provider="Gemini"):
-    prompt = (
-        "أنت مساعد ذكاء اصطناعي متخصص في تفريغ وتنظيم لوحات السيارات السودانية بدقة تامة.\n"
-        "النص التالي هو تفريغ صوتي لـ Whisper يحتوي على مواقع، أرقام لوحات، وحروف (مثل أ، ب، م، ن، ر) وملاحظات (ن نقل، ت تاكسي).\n"
+# دالة تحليل النص بذكاء عبر Groq لفك التداخل وتنسيق اللوحات
+def parse_text_with_groq(client, raw_text):
+    models_to_try = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "gemma2-9b-it",
+    ]
+
+    system_prompt = (
+        "أنت خبير ذكاء اصطناعي متخصص في تفريغ وتنظيم لوحات السيارات السودانية بدقة تامة.\n"
+        "النص التالي هو تفريغ صوتي لـ Whisper يحتوي على مواقع، أرقام لوحات، وحروف متداخلة (مثل أ، ب، م، ن، ر) وملاحظات (ن نقل، ت تاكسي).\n"
         "مهمتك:\n"
-        "1. فك تداخل الكلمات واستخراج الحروف والأرقام لكل لوحة سيارة بشكل صحيح ومنفصل (مثال: إذا كان النص يذكر أرقام وحروف، حولها إلى شكل لوحة مثل: أ ب 4567 أو ب 1234).\n"
+        "1. فك تداخل الكلمات تماماً واستخراج الحروف والأرقام لكل لوحة سيارة بشكل منظم ومنفصل (مثل: ب م ر 4567).\n"
         "2. استخراج رقم الموقع الصحيح.\n"
         "3. استخراج التصنيف والملاحظات (ن، ت، ب، م، ف، ر).\n"
         "أعطني النتيجة حصراً في أسطر مفصولة بالرمز | بالترتيب التالي لكل سيارة:\n"
         "رقم الموقع | حروف وأرقام اللوحة | التصنيف والملاحظات\n"
-        "لا تضف أي شروحات أو مقدمات، فقط الأسطر المطلوبة.\n\n"
-        f"النص المراد تحليله:\n{raw_text}"
+        "لا تضف أي شروحات أو مقدمات، فقط الأسطر المطلوبة بالصيغة المحددة."
     )
 
-    # المحاولة الأولى باستخدام Google Gemini (مستقر جداً وسريع ومجاني)
-    if provider == "Gemini" or True:
+    for model_name in models_to_try:
         try:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash", contents=prompt
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": raw_text},
+                ],
+                temperature=0.1,
             )
-            if response and response.text:
-                return response.text
+            content = response.choices[0].message.content
+            if content and "|" in content:
+                return content
         except Exception:
-            pass
-
-    # المحاولة البديلة باستخدام Groq في حال تطلب الأمر
-    try:
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-        )
-        if response.choices[0].message.content:
-            return response.choices[0].message.content
-    except Exception:
-        pass
-
+            continue
     return ""
 
 
@@ -160,64 +154,53 @@ st.write(
     "ارفعي ملف التسجيل الصوتي للحصول على جدول Excel منظم ودقيق للوحات السيارات."
 )
 
-api_key = st.text_input(
-    "أدخلي مفتاح API الخاص بك (Gemini API أو Groq API):", type="password"
+groq_api_key = st.text_input(
+    "أدخلي مفتاح Groq API الخاص بك:", type="password"
 )
 
 uploaded_file = st.file_uploader(
     "اختاري ملف الصوت أو الريكورد من الجوال:", type=None
 )
 
-if uploaded_file is not None and api_key:
+if uploaded_file is not None and groq_api_key:
     with open("temp_audio_file.m4a", "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        # الخطوة 1: تفريغ الصوت عبر Whisper (باستخدام Groq لأجل الصوت)
-        # ملاحظة: إذا كان مفتاحك من Google Gemini، سنحتاج مفتاح Groq للصوت فقط، أو يمكنك إدخال مفتاح Groq هنا.
-        # لتسهيل الأمر، جعلناها تعتمد على مفتاح Groq في تفريغ الصوت ومفتاح Gemini للتحليل، أو العكس.
-        # دعنا نطلب مفتاح Groq للصوت ومفتاح Gemini للتحليل إذا أردتِ، أو وضع مفتاحين.
-        pass
-
-    # للتسهيل المطلق ودون تعقيد المفاتيح، سنعتمد على نموذج Whisper المجاني لتفريغ الصوت عبر Groq ومفتاح واحد:
-    groq_audio_key = st.text_input(
-        "أدخلي مفتاح Groq API (لتفريغ الريكورد الصوتي):", type="password"
-    )
-
-    if uploaded_file is not None and groq_audio_key and api_key:
-        if st.button("تشغيل المعالجة الشاملة"):
-            with st.spinner("🎤 جاري تفريغ الصوت عبر Whisper وتحليله بالذكاء..."):
-                try:
-                    client_groq = Groq(api_key=groq_audio_key)
-                    with open("temp_audio_file.m4a", "rb") as file:
-                        transcription = client_groq.audio.transcriptions.create(
-                            file=("audio.m4a", file.read()),
-                            model="whisper-large-v3",
-                            language="ar",
-                            response_format="text",
-                        )
-                    raw_text = transcription
-                except Exception as e:
-                    st.error(f"خطأ في تفريغ الصوت: {e}")
-                    raw_text = ""
-
-            if raw_text:
-                with st.spinner(
-                    "📊 جاري استخراج وترتيب اللوحات في جدول Excel..."
-                ):
-                    ai_output = parse_text_with_ai(raw_text, api_key)
-                    df = create_dataframe_from_ai(ai_output)
-                    excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
-
-                st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
-                st.dataframe(df)
-
-                with open(excel_file, "rb") as f:
-                    st.download_button(
-                        label="📥 تحميل ملف Excel الجاهز",
-                        data=f,
-                        file_name="تفريغ_اللوحات.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        with st.spinner(
+            "🎤 جاري تفريغ الصوت وتحليل اللوحات بذكاء عبر Groq..."
+        ):
+            try:
+                client = Groq(api_key=groq_api_key)
+                with open("temp_audio_file.m4a", "rb") as file:
+                    transcription = client.audio.transcriptions.create(
+                        file=("audio.m4a", file.read()),
+                        model="whisper-large-v3",
+                        language="ar",
+                        response_format="text",
                     )
-            else:
-                st.error("تعذر إتمام التفريغ الصوتي.")
+                raw_text = transcription
+            except Exception as e:
+                st.error(f"خطأ في تفريغ الصوت: {e}")
+                raw_text = ""
+
+        if raw_text:
+            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
+                ai_output = parse_text_with_groq(client, raw_text)
+                df = create_dataframe_from_ai(ai_output)
+                excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
+
+            st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
+            st.dataframe(df)
+
+            with open(excel_file, "rb") as f:
+                st.download_button(
+                    label="📥 تحميل ملف Excel الجاهز",
+                    data=f,
+                    file_name="تفريغ_اللوحات.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+        else:
+            st.error("تعذر إتمام التحليل. تأكدي من صحة مفتاح API.")
+elif uploaded_file is not None and not groq_api_key:
+    st.warning("⚠️ الرجاء إدخال مفتاح Groq API في الخانة المخصصة بالأعلى لبدء العمل.")
