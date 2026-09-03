@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 
-# 1. تنظيف حروف وأرقام السيارة (العمود A)
+# 1. تنظيف حروف وأرقام السيارة (العمود A) - دمج الحروف وإلغاء مسافات الأرقام
 def normalize_plate(text):
     text = re.sub(r"[أإآ]", "ا", text)
     text = text.replace("هـ", "ه")
@@ -49,37 +49,87 @@ def parse_classification(text):
     return " ".join(notes) if notes else None
 
 
-# 3. معالجة النص المنظم واستخراج البيانات للجدول
+# 3. معالجة وتفصيل النص المفرغ بذكاء إلى صفوف بيانات
 def process_text_data(raw_text):
     rows = []
     current_site = None
     site_written_for_group = False
 
-    lines = raw_text.split("\n")
-    for line in lines:
-        line = line.strip()
-        if not line:
+    # تقسيم النص بناءً على الكلمات أو التوقفات
+    # نبحث عن عبارات المواقع أو الأجزاء التي تحتوي على لوحات
+    tokens = raw_text.split()
+    current_chunk = []
+
+    for word in tokens:
+        # إذا ظهرت كلمة موقع، نعالج ما قبلها ونبدأ موقعاً جديداً
+        if "موقع" in word or "رقم" in word:
+            if current_chunk:
+                chunk_text = " ".join(current_chunk)
+                plate = normalize_plate(chunk_text)
+                if plate:
+                    cls = parse_classification(chunk_text)
+                    site_val = (
+                        current_site
+                        if (current_site and not site_written_for_group)
+                        else ""
+                    )
+                    if site_val:
+                        site_written_for_group = True
+                    rows.append({
+                        "plate": plate,
+                        "site": site_val,
+                        "classification": cls,
+                    })
+                current_chunk = []
+
+            # استخراج رقم الموقع إن وجد في نفس الكلمة أو الكلمات التالية
+            site_num_match = re.search(r"\d+", word)
+            if site_num_match:
+                current_site = site_num_match.group(0)
+                site_written_for_group = False
             continue
 
-        site_match = re.search(r"موقع\s*(?:رقم)?\s*(\d+)", line)
-        if site_match:
-            current_site = site_match.group(1)
-            site_written_for_group = False
-            continue
+        current_chunk.append(word)
+        # إذا احتوت الكتلة على أقم وحروف كافية، نعتبرها لوحة مكتملة ونضيفها لسطر مستقل
+        chunk_text = " ".join(current_chunk)
+        if (
+            any(char.isdigit() for char in chunk_text)
+            and len(re.findall(r"[\u0600-\u06FF]", chunk_text)) >= 2
+        ):
+            plate = normalize_plate(chunk_text)
+            if plate:
+                cls = parse_classification(chunk_text)
+                site_val = (
+                    current_site
+                    if (current_site and not site_written_for_group)
+                    else ""
+                )
+                if site_val:
+                    site_written_for_group = True
+                rows.append({
+                    "plate": plate,
+                    "site": site_val,
+                    "classification": cls,
+                })
+                current_chunk = []
 
-        plate = normalize_plate(line)
+    # معالجة ما تبقى في الكتل الأخيرة
+    if current_chunk:
+        chunk_text = " ".join(current_chunk)
+        plate = normalize_plate(chunk_text)
         if plate:
-            classification = parse_classification(line)
-
-            site_val = None
-            if current_site and not site_written_for_group:
-                site_val = current_site
+            cls = parse_classification(chunk_text)
+            site_val = (
+                current_site
+                if (current_site and not site_written_for_group)
+                else ""
+            )
+            if site_val:
                 site_written_for_group = True
-
             rows.append({
                 "plate": plate,
-                "site": site_val if site_val else "",
-                "classification": classification if classification else None,
+                "site": site_val,
+                "classification": cls,
             })
 
     return pd.DataFrame(rows)
@@ -149,7 +199,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بذكاء..."):
+        with st.spinner("🎤 جاري تفريغ الصوت بدقة عالية..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -159,34 +209,13 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-
-                # استخدام نموذج الذكاء الاصطناعي لترتيب وتنسيق النص المفرغ بدقة
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "أنت مساعد ذكي لتنظيم نصوص تفريغ لوحات السيارات."
-                                " النص المستلم هو تفريغ صوتي يحتوي على أرقام"
-                                " مواقع (مثل موقع 5632) ولوحات سيارات وملاحظات"
-                                " (مثل نقل، تاكسي، حرف الباء، إلخ). قم بإعادة"
-                                " كتابة النص وتنسيقه بحيث يكون كل موقع في سطر"
-                                " مستقل (مثال: موقع 5632)، وكل لوحة مع سيارتها"
-                                " وملاحظاتها في سطر مستقل بذاته، بدون أي شرح"
-                                " إضافي."
-                            ),
-                        },
-                        {"role": "user", "content": transcription},
-                    ],
-                    model="llama-3.3-70b-versatile",
-                )
-                raw_text = chat_completion.choices[0].message.content
+                raw_text = transcription
             except Exception as e:
-                st.error(f"حدث خطأ أثناء المعالجة: {e}")
+                st.error(f"حدث خطأ أثناء الاتصال: {e}")
                 raw_text = ""
 
         if raw_text:
-            with st.spinner("📊 جاري بناء جدول Excel بدقة تامة..."):
+            with st.spinner("📊 جاري تنظيم البيانات وترتيب جدول Excel..."):
                 df = process_text_data(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
