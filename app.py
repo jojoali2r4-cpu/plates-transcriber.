@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from google import genai
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -25,14 +26,19 @@ def process_with_gemini(api_key, raw_text):
         "لا تضف أي مقدمات أو شرح، فقط الأسطر المطلوبة بالصيغة المحددة.\n\n"
         f"النص:\n{raw_text}"
     )
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash", contents=prompt
-        )
-        return response.text if response and response.text else ""
-    except Exception as e:
-        st.error(f"خطأ في الاتصال بـ Gemini: {e}")
-        return ""
+
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash", contents=prompt
+            )
+            return response.text if response and response.text else ""
+        except Exception as e:
+            if attempt == 2:
+                st.error(f"خطأ في الاتصال بـ Gemini: {e}")
+                return ""
+            time.sleep(2)
+    return ""
 
 
 def create_dataframe(ai_output, raw_text=""):
@@ -162,6 +168,7 @@ if uploaded_file is not None and gemini_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء تفريغ ومعالجة الصوت"):
+        raw_text = ""
         with st.spinner("🎤 جاري رفع وتحليل الصوت عبر نموذج Gemini..."):
             try:
                 client = genai.Client(api_key=gemini_api_key)
@@ -173,11 +180,22 @@ if uploaded_file is not None and gemini_api_key:
                     "اكتب النص المفرغ مباشرة دون مقدمات."
                 )
 
-                # استخدام نموذج gemini-3.6-flash الموصى به رسمياً في الخطأ
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash", contents=[audio_file, prompt]
-                )
-                raw_text = response.text if response and response.text else ""
+                # محاولات متعددة لتجاوز ضغط الخادم المؤقت
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-3.6-flash",
+                            contents=[audio_file, prompt],
+                        )
+                        raw_text = (
+                            response.text if response and response.text else ""
+                        )
+                        if raw_text:
+                            break
+                    except Exception as ex:
+                        if attempt == 2:
+                            raise ex
+                        time.sleep(3)
 
                 client.files.delete(name=audio_file.name)
             except Exception as e:
@@ -205,7 +223,7 @@ if uploaded_file is not None and gemini_api_key:
                 )
         else:
             st.error(
-                "تعذر استخراج النص من الصوت. تأكدي من صحة المفتاح أو وضوح التسجيل."
+                "تعذر استخراج النص من الصوت بسبب الضغط. يرجى المحاولة مرة أخرى بعد قليل."
             )
 elif uploaded_file is not None and not gemini_api_key:
     st.warning("⚠️ الرجاء إدخال مفتاح Gemini API في الخانة بالأعلى أولاً.")
