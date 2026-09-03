@@ -32,7 +32,6 @@ def normalize_plate(text):
 def parse_classification(text):
     notes = []
 
-    # الكلمات المفتاحية المركبة والمفردة
     if "نقل" in text:
         notes.append("ن")
     if "تاكسي" in text:
@@ -50,18 +49,35 @@ def parse_classification(text):
     if "شقق" in text:
         notes.append("شقق")
 
-    # إرجاع التصنيف مفصولاً بمسافة أو فارغاً تماماً
     return " ".join(notes) if notes else None
 
 
-# 3. معالجة النص المفرغ وترتيب البيانات والسطور بدقة
+# 3. معالجة النص (حتي لو جاء في سطر واحد طويل، نقوم بتقسيمه بذكاء)
 def process_text_data(raw_text):
     rows = []
     current_site = None
     site_written_for_group = False
 
-    # تقسيم النص المفرغ سطر بسطر أو جملة بجملة
+    # إذا كان النص جاء في سطر واحد متصل، نقوم بتقسيمه بمسافات أو بكلمات مفتاحية
+    # أو يمكننا البحث عن الأجزاء التي تحتوي على حروف وأرقام
     lines = raw_text.split("\n")
+    if len(lines) <= 1:
+        # إذا كان النص بالكامل سطر واحد، نقوم بتقسيمه بناءً على تكرار الأرقام والحروف أو الفراغات الكبيرة
+        # محاولة تقسيم النص الممتد إلى أجزاء منفصلة
+        # عادة كل لوحة تتكون من حروف وأرقام متلاصقة أو بينها مسافة قصيرة
+        words = raw_text.split()
+        temp_line = []
+        splitted_lines = []
+        for w in words:
+            temp_line.append(w)
+            # إذا الكلمة تحتوي على أرقام، ربما تكون نهاية لوحة
+            if any(char.isdigit() for char in w):
+                splitted_lines.append(" ".join(temp_line))
+                temp_line = []
+        if temp_line:
+            splitted_lines.append(" ".join(temp_line))
+        lines = splitted_lines if splitted_lines else lines
+
     for line in lines:
         line = line.strip()
         if not line:
@@ -71,14 +87,13 @@ def process_text_data(raw_text):
         site_match = re.search(r"موقع\s*(?:رقم)?\s*(\d+)", line)
         if site_match:
             current_site = site_match.group(1)
-            site_written_for_group = False  # لكي يُكتب مرة واحدة فقط
+            site_written_for_group = False
             continue
 
         plate = normalize_plate(line)
         if plate:
             classification = parse_classification(line)
 
-            # رقم الموقع يكتب مرة واحدة فقط أول الموقع، ثم يترك فارغاً لباقي سياراته
             site_val = None
             if current_site and not site_written_for_group:
                 site_val = current_site
@@ -87,15 +102,13 @@ def process_text_data(raw_text):
             rows.append({
                 "plate": plate,
                 "site": site_val if site_val else "",
-                "classification": (
-                    classification if classification else None
-                ),  # خلية فارغة تماماً
+                "classification": classification if classification else None,
             })
 
     return pd.DataFrame(rows)
 
 
-# 4. بناء ملف Excel المنسق (اتحاه RTL وحدود وألوان مطابقة تماماً للمطلوب)
+# 4. بناء ملف Excel المنسق (اتجاه RTL وحدود وألوان)
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -133,7 +146,6 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
             cell.font = data_font
             cell.alignment = center_align
             cell.border = thin_border
-            # ضمان أن الخلايا الفارغة خالية كلياً من أي مسافات أو رموز
             if cell.value == "" or cell.value is None:
                 cell.value = None
 
@@ -149,7 +161,6 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
 st.title("🚗 تطبيق تفريغ لوحات السيارات")
 st.write("ارفعي ملف التسجيل الصوتي للحصول على ملف Excel جاهز ومنسق.")
 
-# طلب مفتاح Groq API من المستخدم
 groq_api_key = st.text_input("أدخلي مفتاح Groq API الخاص بك:", type="password")
 
 uploaded_file = st.file_uploader(
