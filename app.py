@@ -27,7 +27,7 @@ def process_with_gemini(api_key, raw_text):
     )
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
+            model="gemini-2.5", contents=prompt
         )
         return response.text if response and response.text else ""
     except Exception as e:
@@ -146,14 +146,11 @@ st.write(
 gemini_api_key = st.text_input(
     "أدخلي مفتاح Gemini API الخاص بك:", type="password"
 )
-
-# السماح برفع أي ملف دون تقييد الصيغة لتجنب مشاكل الجوال
 uploaded_file = st.file_uploader(
     "اختاري ملف الريكورد أو الصوت من جهازك:", type=None
 )
 
 if uploaded_file is not None and gemini_api_key:
-    # حفظ الملف الصوتي باسم مؤقت يعتمد على اسم الملف الأصلي لتفادي مشاكل الحفظ
     file_extension = (
         uploaded_file.name.split(".")[-1]
         if "." in uploaded_file.name
@@ -176,8 +173,9 @@ if uploaded_file is not None and gemini_api_key:
                     "اكتب النص المفرغ مباشرة دون مقدمات."
                 )
 
+                # استخدام النموذج المستقر والمحدث gemini-2.5
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash", contents=[audio_file, prompt]
+                    model="gemini-2.5", contents=[audio_file, prompt]
                 )
                 raw_text = response.text if response and response.text else ""
 
