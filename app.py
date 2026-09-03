@@ -12,96 +12,117 @@ st.set_page_config(
 )
 
 
-# استخدام نموذج الذكاء الاصطناعي الأحدث لتنظيم وفك تداخل كلمات Whisper بدقة متناهية
-def parse_text_with_llm(client, raw_text):
-    models_to_try = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "gemma2-9b-it",
-    ]
-
-    system_prompt = (
-        "أنت خبير ذكاء اصطناعي متخصص في تصحيح وفك تداخل تفريغ لوحات السيارات"
-        " السودانية الناجم عن تحويل الصوت.\nالنص القادم هو تفريغ صوتي لقاموس"
-        " لوحات سيارات متداخلة الحروف والأرقام، مع أرقام مواقع وملاحظات (مثل نقل"
-        " 'ن'، تاكسي 'ت'، باء، ميم، فاء، راء).\nمهمتك الأساسية:\n1. فك الكلمات"
-        " المتداخلة تماماً وفصل الحروف العربية عن الأرقام (مثل تحويل"
-        " 'راقبه استبة سبعة ثلاثة' إلى صيغة لوحة صحيحة مثل 'ب س 73' أو ما يناسبها"
-        " منطقياً، وفصل الأرقام الأربعة أو الثلاثة عن الحروف).\n2. استخراج كل"
-        " سيارة في سطر مستقل.\n3. تحديد رقم الموقع (يكتب أول مرة فقط للموقع أو"
-        " عند تغييره).\n4. استخراج التصنيف والملاحظات (ن، ت، ب، م، ف، ر).\nأعطني"
-        " النتيجة مباشرة كقائمة أسطر مفصولة بالرمز | بالترتيب التالي لكل"
-        " سطر:\nرقم الموقع | حروف وأرقام اللوحة | التصنيف والملاحظات\nلا تضف أي"
-        " مقدمات أو شروحات، فقط الأسطر المطلوبة بالصيغة المحددة."
-    )
-
-    for model_name in models_to_try:
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": raw_text},
-                ],
-                temperature=0.1,
-            )
-            content = response.choices[0].message.content
-            if content and "|" in content:
-                return content
-        except Exception:
-            continue
-
-    return ""
-
-
-# تحويل مخرجات الذكاء الاصطناعي إلى جدول بيانات مرتب
-def create_dataframe_from_ai(ai_output):
+# دالة معالجة برمجية ذكية للنص المفرغ بدون الحاجة لنموذج دردشة (لتجنب أخطاء API تماماً)
+def smart_parse_transcription(raw_text):
     rows = []
-    lines = ai_output.strip().split("\n")
     current_site = ""
+    last_written_site = None
+
+    # تقسيم النص إلى أسطر أو جمل بناءً على النقاط أو الفواصل أو الأسطر الجديدة
+    lines = re.split(r"[\n\.\،؛]", raw_text)
 
     for line in lines:
-        if "|" in line:
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 3:
-                site_raw = parts[0]
-                plate = parts[1]
-                classification = parts[2]
+        line = line.strip()
+        if not line:
+            continue
 
-                # تنظيف رقم الموقع
-                site_num = "".join(re.findall(r"\d+", site_raw))
-                if site_num:
-                    current_site = site_num
-                    site_val = current_site
-                else:
-                    site_val = ""
+        # استخراج رقم الموقع (مثل موقع 5609 أو رقم 5609)
+        site_match = re.search(r"(?:موقع|رقم)?\s*(\d{3,5})", line)
+        if "موقع" in line or "رقم" in line or "مربع" in line:
+            if site_match:
+                current_site = site_match.group(1)
+                if current_site != last_written_site:
+                    last_written_site = None
+                # إذا كان السطر يمثل إعلان الموقع فقط
+                if len(line.replace(site_match.group(0), "").strip()) < 4:
+                    continue
 
-                if plate and plate != "-":
-                    rows.append({
-                        "plate": plate,
-                        "site": site_val,
-                        "classification": (
-                            classification if classification != "-" else ""
-                        ),
-                    })
+        # استخراج الأرقام الخاصة باللوحة
+        numbers_found = re.findall(r"\d+", line)
+        plate_numbers = ""
+        for num in numbers_found:
+            if len(num) >= 2 and num != current_site:
+                plate_numbers = num
+                break
 
-    # ضمان ظهور رقم الموقع لأول سيارة فقط في كل مجموعة متتالية
-    seen_sites = set()
-    final_rows = []
-    for r in rows:
-        s = r["site"]
-        if s:
-            if s not in seen_sites:
-                seen_sites.add(s)
-                final_rows.append(r)
-            else:
-                r_copy = r.copy()
-                r_copy["site"] = ""
-                final_rows.append(r_copy)
-        else:
-            final_rows.append(r)
+        # استخراج وتصفية الحروف العربية للوحة
+        cleaned_letters = re.sub(
+            r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
+            " ",
+            line,
+        )
+        cleaned_letters = re.sub(r"[أإآ]", "ا", cleaned_letters)
+        cleaned_letters = cleaned_letters.replace("هـ", "ه")
 
-    return pd.DataFrame(final_rows)
+        # محاولة استخلاص الكلمات العربية الواضحة كحروف للوحة
+        arabic_words = re.findall(r"[\u0600-\u06FF]{2,}", cleaned_letters)
+        letters = " ".join(arabic_words) if arabic_words else ""
+
+        # استخراج الملاحظات والتصنيفات
+        notes = []
+        if any(w in line for w in ["نقل", " ن ", " حرف النون"]):
+            notes.append("ن")
+        if any(w in line for w in ["تاكسي", " ت ", "تاكسى", " حرف التاء"]):
+            notes.append("ت")
+        if "باء" in line or " حرف الباء" in line:
+            notes.append("ب")
+        if "ميم" in line or " حرف الميم" in line:
+            notes.append("م")
+        if "فاء" in line or " حرف الفاء" in line:
+            notes.append("ف")
+        if "راء" in line or " حرف الراء" in line:
+            notes.append("ر")
+        if "مربع" in line:
+            notes.append("مربع")
+        if "شقق" in line:
+            notes.append("شقق")
+
+        classification = " ".join(notes) if notes else ""
+
+        # تجميع اللوحة النهائية
+        plate = ""
+        if letters and plate_numbers:
+            plate = f"{letters} {plate_numbers}"
+        elif plate_numbers:
+            plate = plate_numbers
+        elif letters:
+            plate = letters
+
+        if plate:
+            site_val = ""
+            if current_site and last_written_site != current_site:
+                site_val = current_site
+                last_written_site = current_site
+
+            rows.append({
+                "plate": plate,
+                "site": site_val,
+                "classification": classification,
+            })
+
+    # إذا لم يستخرج النظام أسطر كافية، نقوم بتقسيم النص البسيط كلمة بكلمة
+    if not rows:
+        words = raw_text.split()
+        temp_plate = ""
+        for word in words:
+            if re.match(r"^\d{2,4}$", word):
+                temp_plate = word
+            elif re.match(r"^[\u0600-\u06FF]{1,4}$", word) and temp_plate:
+                rows.append({
+                    "plate": f"{word} {temp_plate}",
+                    "site": current_site,
+                    "classification": "",
+                })
+                temp_plate = ""
+        if not rows:
+            # حل أخير: وضع النص المفرغ كاملاً في السطر الأول إذا تعذر الفرز التلقائي
+            rows.append({
+                "plate": raw_text[:50],
+                "site": current_site,
+                "classification": "",
+            })
+
+    return pd.DataFrame(rows)
 
 
 # بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
@@ -168,7 +189,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وفك تداخل الكلمات بالذكاء الاصطناعي..."):
+        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بدقة عالية..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -178,15 +199,14 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-
-                ai_output = parse_text_with_llm(client, transcription)
+                raw_text = transcription
             except Exception as e:
-                st.error(f"حدث خطأ أثناء الاتصال: {e}")
-                ai_output = ""
+                st.error(f"حدث خطأ أثناء تفريغ الصوت: {e}")
+                raw_text = ""
 
-        if ai_output:
-            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
-                df = create_dataframe_from_ai(ai_output)
+        if raw_text:
+            with st.spinner("📊 جاري فرز البيانات واستخراج ملف Excel..."):
+                df = smart_parse_transcription(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
             st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
@@ -200,6 +220,6 @@ if uploaded_file is not None and groq_api_key:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         else:
-            st.error("تعذر تحليل النص. تأكدي من صحة مفتاح API.")
+            st.error("تعذر إتمام العملية. تأكدي من صحة مفتاح API أو جربي ملفاً آخر.")
 elif uploaded_file is not None and not groq_api_key:
     st.warning("⚠️ الرجاء إدخال مفتاح Groq API في الخانة المخصصة بالأعلى لبدء العمل.")
