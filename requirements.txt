@@ -3,3 +3,4 @@ openai-whisper
 openpyxl
 pandas
 setuptools
+groq
