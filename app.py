@@ -12,126 +12,120 @@ st.set_page_config(
 )
 
 
-# دالة تجربة عدة نماذج تلقائياً لضمان عدم توقف التطبيق
-def parse_text_with_llm(client, raw_text):
-    models_to_try = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "gemma2-9b-it",
-    ]
-
-    system_prompt = (
-        "أنت خبير في تنظيم وتصحيح تفريغ لوحات السيارات السودانية. النص القادم"
-        " هو تفريغ صوتي يحتوي على أرقام مواقع ولوحات سيارات وملاحظات (مثل نقل،"
-        " تاكسي، حرف الباء، ميم، فاء، راء).\nمهمتك:\n1. استخراج كل سيارة في سطر"
-        " مستقل.\n2. تصحيح حروف وأرقام اللوحة بحيث تتكون من الحروف (مثل: ب م ر"
-        " أو ج د ك) متلاصقة مع الأرقام (أربعة أرقام) بدون أي كلام زائد.\n3."
-        " تحديد رقم الموقع (يكتب أول مرة فقط للموقع أو عند تغييره).\n4. استخراج"
-        " الملاحظات (ن لنقل، ت لتاكسي، ب، م، ف، ر) في عمود التصنيف.\nأعطني"
-        " النتيجة مباشرة كقائمة مفصولة بالرمز | بالترتيب التالي لكل سطر:\nرقم"
-        " الموقع | حروف وأرقام اللوحة | التصنيف والملاحظات"
-    )
-
-    for model_name in models_to_try:
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": raw_text},
-                ],
-                temperature=0.1,
-            )
-            content = response.choices[0].message.content
-            if content:
-                return content
-        except Exception:
-            continue
-
-    # حل احتياطي برمجي تام في حال عدم توفر أي نموذج دردشة
-    return fallback_parse_text(raw_text)
-
-
-# تحليل احتياطي برمجي بالكامل (لا يعتمد على أي نموذج دردشة)
-def fallback_parse_text(raw_text):
-    lines = raw_text.split("\n")
-    results = []
-    current_site = ""
-    for line in lines:
-        if not line.strip():
-            continue
-        site_match = re.search(r"(?:موقع|رقم)\s*(\d+)", line)
-        if site_match:
-            current_site = site_match.group(1)
-
-        numbers = "".join(re.findall(r"\d+", line))
-        letters_text = re.sub(
-            r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|\d+)", " ", line
-        )
-        letters_text = re.sub(r"[أإآ]", "ا", letters_text)
-        letters = "".join(re.findall(r"[\u0600-\u06FF]", letters_text))
-        plate = letters + numbers if (letters or numbers) else ""
-
-        notes = []
-        if "نقل" in line:
-            notes.append("ن")
-        if "تاكسي" in line:
-            notes.append("ت")
-        classification = " ".join(notes) if notes else "-"
-
-        if len(numbers) >= 2:
-            results.append(
-                f"{current_site} | {plate} | {' '.join(notes) if notes else ''}"
-            )
-    return "\n".join(results)
-
-
-# تحويل مخرجات الذكاء الاصطناعي إلى جدول بيانات
-def create_dataframe_from_ai(ai_output):
+# معالجة النص المفرغ برمجيًا بدقة متناهية (بدون اعتماد على نماذج دردشة)
+def smart_parse_transcription(raw_text):
     rows = []
-    lines = ai_output.strip().split("\n")
     current_site = ""
+    last_written_site = None
+
+    # تنظيف النص الأساسي
+    lines = re.split(r"[\n\.\،؛]", raw_text)
 
     for line in lines:
-        if "|" in line:
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 3:
-                site_raw = parts[0]
-                plate = parts[1]
-                classification = parts[2]
+        line = line.strip()
+        if not line:
+            continue
 
-                site_num = "".join(re.findall(r"\d+", site_raw))
-                if site_num:
-                    current_site = site_num
-                    site_val = current_site
-                else:
-                    site_val = ""
+        # البحث عن رقم الموقع بدقة (مثل: موقع 5609 أو رقم 5609 أو حتى الأرقام المنفردة في بداية السياق)
+        site_match = re.search(r"(?:موقع|رقم)?\s*(\d{3,5})", line)
+        if "موقع" in line or "رقم" in line:
+            if site_match:
+                current_site = site_match.group(1)
+                if current_site != last_written_site:
+                    last_written_site = None
+                # إذا كان السطر عبارة عن إعلان للموقع فقط، نتجاوزه للسطر التالي
+                if len(line.replace(site_match.group(0), "").strip()) < 3:
+                    continue
 
-                if plate and len(re.findall(r"\d+", plate)) >= 2:
-                    rows.append({
-                        "plate": plate,
-                        "site": site_val,
-                        "classification": (
-                            classification if classification != "-" else ""
-                        ),
-                    })
+        # استخراج الأرقام الخاصة باللوحة (عادة 3 إلى 4 أرقام)
+        numbers_found = re.findall(r"\d+", line)
+        plate_numbers = ""
+        for num in numbers_found:
+            if (
+                len(num) >= 2 and num != current_site
+            ):  # تجنب اعتبار رقم الموقع كأرقام للوحة
+                plate_numbers = num
+                break
 
-    seen_sites = set()
-    final_rows = []
-    for r in rows:
-        s = r["site"]
-        if s:
-            if s not in seen_sites:
-                seen_sites.add(s)
-                final_rows.append(r)
-            else:
-                r_copy = r.copy()
-                r_copy["site"] = ""
-                final_rows.append(r_copy)
-        else:
-            final_rows.append(r)
+        # استخراج وتنقية الحروف العربية للوحة
+        cleaned_letters = re.sub(
+            r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
+            " ",
+            line,
+        )
+        cleaned_letters = re.sub(r"[أإآ]", "ا", cleaned_letters)
+        cleaned_letters = cleaned_letters.replace("هـ", "ه")
+        letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters))
 
-    return pd.DataFrame(final_rows)
+        # تجميع اللوحة (حروف + أرقام)
+        plate = ""
+        if letters and plate_numbers:
+            plate = f"{letters} {plate_numbers}"
+        elif plate_numbers:
+            plate = plate_numbers
+        elif letters:
+            plate = letters
+
+        # استخراج الملاحظات والتصنيفات
+        notes = []
+        if (
+            "نقل" in line
+            or " ن " in line
+            or line.endswith("ن")
+            or " حرف النون " in line
+        ):
+            notes.append("ن")
+        if (
+            "تاكسي" in line
+            or " ت " in line
+            or line.endswith("ت")
+            or " تاكسى " in line
+        ):
+            notes.append("ت")
+        if "باء" in line or " حرف الباء" in line:
+            notes.append("ب")
+        if "ميم" in line or " حرف الميم" in line:
+            notes.append("م")
+        if "فاء" in line or " حرف الفاء" in line:
+            notes.append("ف")
+        if "راء" in line or " حرف الراء" in line:
+            notes.append("ر")
+        if "مربع" in line:
+            notes.append("مربع")
+        if "شقق" in line:
+            notes.append("شقق")
+
+        classification = " ".join(notes) if notes else ""
+
+        # شرط قبول السطر كلوحة صحيحة (يحتوي على أرقام أو حروف واضحة)
+        if plate and (plate_numbers or len(letters) >= 2):
+            site_val = ""
+            if current_site and last_written_site != current_site:
+                site_val = current_site
+                last_written_site = current_site  # كتابة الموقع مرة واحدة فقط
+
+            rows.append({
+                "plate": plate,
+                "site": site_val,
+                "classification": classification,
+            })
+
+    # إذا لم يستخرج الجدول بشكل كافٍ، نقوم بتقسيم النص بناءً على المسافات والكلمات المفتاحية
+    if not rows:
+        words = raw_text.split()
+        temp_plate = ""
+        for word in words:
+            if re.match(r"^\d{2,4}$", word):
+                temp_plate = word
+            elif re.match(r"^[\u0600-\u06FF]{1,4}$", word) and temp_plate:
+                rows.append({
+                    "plate": f"{word} {temp_plate}",
+                    "site": current_site,
+                    "classification": "",
+                })
+                temp_plate = ""
+
+    return pd.DataFrame(rows)
 
 
 # بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
@@ -208,15 +202,14 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-
-                ai_output = parse_text_with_llm(client, transcription)
+                raw_text = transcription
             except Exception as e:
                 st.error(f"حدث خطأ أثناء الاتصال: {e}")
-                ai_output = ""
+                raw_text = ""
 
-        if ai_output:
-            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
-                df = create_dataframe_from_ai(ai_output)
+        if raw_text:
+            with st.spinner("📊 جاري فرز اللوحات وبناء جدول Excel..."):
+                df = smart_parse_transcription(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
             st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
@@ -230,6 +223,6 @@ if uploaded_file is not None and groq_api_key:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         else:
-            st.error("تعذر معالجة النص. تأكدي من صحة مفتاح API.")
+            st.error("تعذر تفريغ الصوت. تأكدي من صحة مفتاح API.")
 elif uploaded_file is not None and not groq_api_key:
     st.warning("⚠️ الرجاء إدخال مفتاح Groq API في الخانة المخصصة بالأعلى لبدء العمل.")
