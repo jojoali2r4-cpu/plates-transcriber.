@@ -1,57 +1,37 @@
 import os
 import re
-from groq import Groq
+from google import genai
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 
-# ضبط واجهة التطبيق
 st.set_page_config(
     page_title="تفريغ لوحات السيارات", page_icon="🚗", layout="centered"
 )
 
 
-# دالة تحليل النص بذكاء عبر Groq لفك التداخل وتنسيق اللوحات
-def parse_text_with_groq(client, raw_text):
-    models_to_try = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "gemma2-9b-it",
-    ]
-
-    system_prompt = (
-        "أنت خبير ذكاء اصطناعي متخصص في تفريغ وتنظيم لوحات السيارات السودانية بدقة تامة.\n"
-        "النص التالي هو تفريغ صوتي لـ Whisper يحتوي على مواقع، أرقام لوحات، وحروف متداخلة (مثل أ، ب، م، ن، ر) وملاحظات (ن نقل، ت تاكسي).\n"
+def process_with_gemini(api_key, raw_text):
+    client = genai.Client(api_key=api_key)
+    prompt = (
+        "أنت مساعد ذكاء اصطناعي متخصص في تنسيق واستخراج لوحات السيارات السودانية بدقة تامة.\n"
+        "لديك نص مفرغ من تسجيل صوتي يحتوي على أرقام مواقع، أرقام لوحات، حروف متداخلة، وملاحظات (مثل نقل، تاكسي).\n"
         "مهمتك:\n"
-        "1. فك تداخل الكلمات تماماً واستخراج الحروف والأرقام لكل لوحة سيارة بشكل منظم ومنفصل (مثل: ب م ر 4567).\n"
+        "1. فك التداخل واستخراج كل لوحة سيارة بشكل منظم (مثال: أ ب 4567).\n"
         "2. استخراج رقم الموقع الصحيح.\n"
-        "3. استخراج التصنيف والملاحظات (ن، ت، ب، م، ف، ر).\n"
-        "أعطني النتيجة حصراً في أسطر مفصولة بالرمز | بالترتيب التالي لكل سيارة:\n"
+        "3. استخراج التصنيف والملاحظات.\n"
+        "أعطني النتيجة حصراً في أسطر مفصولة بالرمز | بهذا الترتيب لكل سيارة:\n"
         "رقم الموقع | حروف وأرقام اللوحة | التصنيف والملاحظات\n"
-        "لا تضف أي شروحات أو مقدمات، فقط الأسطر المطلوبة بالصيغة المحددة."
+        "لا تضف أي مقدمات أو شرح، فقط الأسطر المطلوبة.\n\n"
+        f"النص:\n{raw_text}"
     )
-
-    for model_name in models_to_try:
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": raw_text},
-                ],
-                temperature=0.1,
-            )
-            content = response.choices[0].message.content
-            if content and "|" in content:
-                return content
-        except Exception:
-            continue
-    return ""
+    response = client.models.generate_content(
+        model="gemini-2.5-flash", contents=prompt
+    )
+    return response.text if response and response.text else ""
 
 
-# تحويل مخرجات الذكاء الاصطناعي إلى جدول بيانات مرتب
-def create_dataframe_from_ai(ai_output):
+def create_dataframe(ai_output, raw_text=""):
     rows = []
     lines = ai_output.strip().split("\n")
     current_site = ""
@@ -59,28 +39,34 @@ def create_dataframe_from_ai(ai_output):
     for line in lines:
         if "|" in line:
             parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 3:
+            if len(parts) >= 2:
                 site_raw = parts[0]
                 plate = parts[1]
-                classification = parts[2]
+                classification = parts[2] if len(parts) > 2 else ""
 
                 site_num = "".join(re.findall(r"\d+", site_raw))
                 if site_num:
                     current_site = site_num
                     site_val = current_site
                 else:
-                    site_val = ""
+                    site_val = current_site
 
                 if plate and plate != "-":
                     rows.append({
                         "plate": plate,
                         "site": site_val,
-                        "classification": (
-                            classification if classification != "-" else ""
-                        ),
+                        "classification": classification,
                     })
 
-    # إظهار رقم الموقع لأول سيارة فقط في كل مجموعة
+    if not rows and raw_text:
+        for line in raw_text.split("\n"):
+            if line.strip():
+                rows.append({
+                    "plate": line.strip(),
+                    "site": "1",
+                    "classification": "",
+                })
+
     seen_sites = set()
     final_rows = []
     for r in rows:
@@ -99,7 +85,6 @@ def create_dataframe_from_ai(ai_output):
     return pd.DataFrame(final_rows)
 
 
-# بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -148,59 +133,27 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     return output_filename
 
 
-# --- الواجهة التفاعلية للمستخدم ---
-st.title("🚗 تطبيق تفريغ لوحات السيارات")
-st.write(
-    "ارفعي ملف التسجيل الصوتي للحصول على جدول Excel منظم ودقيق للوحات السيارات."
+st.title("🚗 تفريغ لوحات السيارات (مدعوم بـ Gemini)")
+gemini_api_key = st.text_input(
+    "أدخلي مفتاح Gemini API الخاص بك:", type="password"
+)
+uploaded_text = st.text_area(
+    "أو الصقي النص الخام هنا مباشرة للمعالجة السريعة:"
 )
 
-groq_api_key = st.text_input(
-    "أدخلي مفتاح Groq API الخاص بك:", type="password"
-)
+if gemini_api_key and uploaded_text:
+    if st.button("معالجة وتوليد Excel"):
+        with st.spinner("جاري التحليل والترتيب..."):
+            ai_out = process_with_gemini(gemini_api_key, uploaded_text)
+            df = create_dataframe(ai_out, uploaded_text)
+            file_path = generate_excel(df)
 
-uploaded_file = st.file_uploader(
-    "اختاري ملف الصوت أو الريكورد من الجوال:", type=None
-)
-
-if uploaded_file is not None and groq_api_key:
-    with open("temp_audio_file.m4a", "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner(
-            "🎤 جاري تفريغ الصوت وتحليل اللوحات بذكاء عبر Groq..."
-        ):
-            try:
-                client = Groq(api_key=groq_api_key)
-                with open("temp_audio_file.m4a", "rb") as file:
-                    transcription = client.audio.transcriptions.create(
-                        file=("audio.m4a", file.read()),
-                        model="whisper-large-v3",
-                        language="ar",
-                        response_format="text",
-                    )
-                raw_text = transcription
-            except Exception as e:
-                st.error(f"خطأ في تفريغ الصوت: {e}")
-                raw_text = ""
-
-        if raw_text:
-            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
-                ai_output = parse_text_with_groq(client, raw_text)
-                df = create_dataframe_from_ai(ai_output)
-                excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
-
-            st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
-            st.dataframe(df)
-
-            with open(excel_file, "rb") as f:
-                st.download_button(
-                    label="📥 تحميل ملف Excel الجاهز",
-                    data=f,
-                    file_name="تفريغ_اللوحات.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-        else:
-            st.error("تعذر إتمام التحليل. تأكدي من صحة مفتاح API.")
-elif uploaded_file is not None and not groq_api_key:
-    st.warning("⚠️ الرجاء إدخال مفتاح Groq API في الخانة المخصصة بالأعلى لبدء العمل.")
+        st.success("تم بنجاح!")
+        st.dataframe(df)
+        with open(file_path, "rb") as f:
+            st.download_button(
+                "تحميل ملف Excel",
+                f,
+                file_name="تفريغ_اللوحات.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
