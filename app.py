@@ -16,7 +16,7 @@ st.set_page_config(
 def parse_text_with_llm(client, raw_text):
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[
                 {
                     "role": "system",
@@ -63,7 +63,6 @@ def create_dataframe_from_ai(ai_output):
                 if site_num:
                     current_site = site_num
                     site_val = current_site
-                    # لجعل الموقع يظهر أول مرة فقط لكل مجموعة، يمكننا ضبطه هنا
                 else:
                     site_val = ""
 
@@ -159,9 +158,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner(
-            "🎤 جاري تفريغ الصوت وتحليله بالذكاء الاصطناعي الذكي..."
-        ):
+        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بالذكاء الاصطناعي..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -172,7 +169,7 @@ if uploaded_file is not None and groq_api_key:
                         response_format="text",
                     )
 
-                # تحليل النص عبر نموذج LLaMA 3.3 القوي
+                # تحليل النص عبر نموذج Llama 3.1 8B السريع والمستقر
                 ai_output = parse_text_with_llm(client, transcription)
             except Exception as e:
                 st.error(f"حدث خطأ أثناء الاتصال: {e}")
