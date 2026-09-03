@@ -11,7 +11,6 @@ st.set_page_config(
 )
 
 
-# دالة تحليل النص واستخراج اللوحات بذكاء عبر Gemini
 def process_with_gemini(api_key, raw_text):
     client = genai.Client(api_key=api_key)
     prompt = (
@@ -36,7 +35,6 @@ def process_with_gemini(api_key, raw_text):
         return ""
 
 
-# تنظيم البيانات في جدول مع خطة بديلة لضمان عدم خروج الملف فارغاً
 def create_dataframe(ai_output, raw_text=""):
     rows = []
     lines = ai_output.strip().split("\n")
@@ -91,7 +89,6 @@ def create_dataframe(ai_output, raw_text=""):
     return pd.DataFrame(final_rows)
 
 
-# توليد ملف إكسيل منسق واحترافي
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -149,22 +146,29 @@ st.write(
 gemini_api_key = st.text_input(
     "أدخلي مفتاح Gemini API الخاص بك:", type="password"
 )
+
+# السماح برفع أي ملف دون تقييد الصيغة لتجنب مشاكل الجوال
 uploaded_file = st.file_uploader(
-    "اختاري ملف الصوت (ملاحظة: يمكنك رفع الريكوردات مباشرة):",
-    type=["m4a", "mp3", "wav", "ogg", "aac", "mp4"],
+    "اختاري ملف الريكورد أو الصوت من جهازك:", type=None
 )
 
 if uploaded_file is not None and gemini_api_key:
-    # حفظ الملف الصوتي مؤقتاً
-    with open("temp_audio.file", "wb") as f:
+    # حفظ الملف الصوتي باسم مؤقت يعتمد على اسم الملف الأصلي لتفادي مشاكل الحفظ
+    file_extension = (
+        uploaded_file.name.split(".")[-1]
+        if "." in uploaded_file.name
+        else "mp4"
+    )
+    temp_filename = f"temp_audio.{file_extension}"
+
+    with open(temp_filename, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء تفريغ ومعالجة الصوت"):
         with st.spinner("🎤 جاري رفع وتحليل الصوت عبر نموذج Gemini..."):
             try:
                 client = genai.Client(api_key=gemini_api_key)
-                # رفع الملف الصوتي مباشرة لـ Gemini
-                audio_file = client.files.upload(file="temp_audio.file")
+                audio_file = client.files.upload(file=temp_filename)
 
                 prompt = (
                     "أنت خبير تفريغ صوتي دقيق جداً.\n"
@@ -177,7 +181,6 @@ if uploaded_file is not None and gemini_api_key:
                 )
                 raw_text = response.text if response and response.text else ""
 
-                # تنظيف الملف المرفوع من سيرفرات جوجل بعد الانتهاع
                 client.files.delete(name=audio_file.name)
             except Exception as e:
                 st.error(f"حدث خطأ أثناء معالجة الملف الصوتي: {e}")
