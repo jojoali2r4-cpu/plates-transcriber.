@@ -12,13 +12,13 @@ st.set_page_config(
 )
 
 
-# 1. تحليل وتنسيق النص البرمجي مباشرة بدون نماذج دردشة خارجية
+# تنظيف النص واستخراج اللوحات بفلترة الكلمات الزائدة
 def parse_transcription_text(raw_text):
     rows = []
     current_site = ""
     last_written_site = None
 
-    # تقسيم النص المفرغ إلى أسطر أو جمل بناءً على المسافات أو علامات التوقف
+    # تقسيم النص إلى أسطر أو جمل
     lines = raw_text.replace(".", "\n").split("\n")
 
     for line in lines:
@@ -26,17 +26,33 @@ def parse_transcription_text(raw_text):
         if not line:
             continue
 
-        # البحث عن رقم الموقع
+        # استبعاد الكلمات الإنشائية والبسملة التي لا علاقة لها باللوحات
+        if any(
+            bad_word in line
+            for bad_word in [
+                "بسم",
+                "الله",
+                "الرحمن",
+                "الرحيم",
+                "السلام",
+                "عليكم",
+                "مرحباً",
+            ]
+        ):
+            continue
+
+        # البحث عن رقم الموقع الجديد
         site_match = re.search(r"(?:موقع|رقم)\s*(\d+)", line)
         if site_match:
             current_site = site_match.group(1)
-            # إذا ظهر موقع جديد، نجعله يظهر في أول سيارة تتبعه
             if current_site != last_written_site:
                 last_written_site = None
+            continue
 
-        # استخراج الأرقام الخاصة باللوحة
+        # استخراج الأرقام وحدها
         numbers = "".join(re.findall(r"\d+", line))
-        # إزالة الكلمات المفتاحية لتبقى الحروف الأصلية فقط
+
+        # تنظيف النص لاستخراج الحروف الأصلية فقط واستبعاد الكلمات المفتاحية
         cleaned_letters_text = re.sub(
             r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
             " ",
@@ -47,9 +63,10 @@ def parse_transcription_text(raw_text):
 
         letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters_text))
 
+        # دمج الحروف والأرقام لتكوين اللوحة
         plate = letters + numbers if (letters or numbers) else ""
 
-        # استخراج التصنيفات والملاحظات
+        # استخراج التصنيفات والملاحظات بدقة
         notes = []
         if "نقل" in line:
             notes.append("ن")
@@ -70,8 +87,8 @@ def parse_transcription_text(raw_text):
 
         classification = " ".join(notes) if notes else ""
 
-        # إضافة السطر إذا وجدنا لوحة أو أرقام
-        if plate and len(plate) > 2:
+        # اشتراط أن تحتوي اللوحة على أرقام أو حروف حقيقية لتفادي النصوص العشوائية
+        if plate and len(numbers) >= 2:
             site_val = ""
             if current_site and last_written_site != current_site:
                 site_val = current_site
@@ -86,7 +103,7 @@ def parse_transcription_text(raw_text):
     return pd.DataFrame(rows)
 
 
-# 2. بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
+# بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -150,7 +167,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بدقة عالية..."):
+        with st.spinner("🎤 جاري تفريغ الصوت وفلترة البيانات بنجاح..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -166,9 +183,7 @@ if uploaded_file is not None and groq_api_key:
                 raw_text = ""
 
         if raw_text:
-            with st.spinner(
-                "📊 جاري تنظيم البيانات واستخراج جدول Excel الاحترافي..."
-            ):
+            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
                 df = parse_transcription_text(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
