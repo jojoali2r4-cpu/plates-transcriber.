@@ -12,44 +12,49 @@ st.set_page_config(
 )
 
 
-# معالجة وتنظيم النص القادم من الذكاء الاصطناعي
-def process_ai_text(ai_text):
+# معالجة وتنظيم النص برمجيًا بدون نماذج خارجية
+def parse_raw_text(raw_text):
     rows = []
     current_site = ""
     last_written_site = None
 
-    lines = ai_text.strip().split("\n")
+    # تنظيف وتجهيز النص لتقسيمه إلى أجزاء واضحة
+    cleaned_text = re.sub(
+        r"(بسم الله الرحمن الرحيم|السلام عليكم|مرحباً)", "", raw_text
+    )
+    lines = re.split(r"[\n\.\،]", cleaned_text)
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
         # البحث عن رقم الموقع
-        site_match = re.search(r"(?:موقع|رقم)?\s*(\d+)", line)
-        # التأكد أن الرقم يمثل موقع وليس رقم لوحة عشوائي
-        if "موقع" in line or "رقم الموقع" in line:
-            if site_match:
-                current_site = site_match.group(1)
-                if current_site != last_written_site:
-                    last_written_site = None
-            continue
+        site_match = re.search(r"(?:موقع|رقم)\s*(\d+)", line)
+        if site_match:
+            current_site = site_match.group(1)
+            if current_site != last_written_site:
+                last_written_site = None
+            # إذا كان السطر يحتوي على الموقع فقط، ننتقل للسطر التالي
+            if len(line.replace(site_match.group(0), "").strip()) < 3:
+                continue
 
-        # استخراج الأرقام وحدها للوحة
+        # استخراج الأرقام وحدها
         numbers = "".join(re.findall(r"\d+", line))
 
-        # استخراج وتنقيه الحروف
-        cleaned_letters = re.sub(
+        # استخراج وتنقيه الحروف الأصلية للوحة
+        letters_text = re.sub(
             r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
             " ",
             line,
         )
-        cleaned_letters = re.sub(r"[أإآ]", "ا", cleaned_letters)
-        cleaned_letters = cleaned_letters.replace("هـ", "ه")
-        letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters))
+        letters_text = re.sub(r"[أإآ]", "ا", letters_text)
+        letters_text = letters_text.replace("هـ", "ه")
+        letters = "".join(re.findall(r"[\u0600-\u06FF]", letters_text))
 
         plate = letters + numbers if (letters or numbers) else ""
 
-        # استخراج الملاحظات والتصنيفات
+        # استخراج التصنيفات والملاحظات
         notes = []
         if "نقل" in line or " ن " in line:
             notes.append("ن")
@@ -70,6 +75,7 @@ def process_ai_text(ai_text):
 
         classification = " ".join(notes) if notes else ""
 
+        # اشتراط أن تحتوي اللوحة على أرقام واضحة
         if plate and len(numbers) >= 2:
             site_val = ""
             if current_site and last_written_site != current_site:
@@ -149,7 +155,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بذكاء..."):
+        with st.spinner("🎤 جاري تفريغ وتحليل الصوت بدقة عالية..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -159,34 +165,14 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-
-                # استخدام نموذج Mixtral المستقر لتنظيم النص وفصل اللوحات
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "أنت مساعد ذكي متخصص في تنظيم تفريغ لوحات"
-                                " السيارات السودانية. النص المرفق هو تفريغ صوتي"
-                                " يحتوي على أرقام مواقع (مثل موقع 5603)"
-                                " ولوحات سيارات وملاحظات. قم باستخراج وترتيب"
-                                " كل سيارة في سطر مستقل مع ذكر رقم الموقع إذا وجد،"
-                                " وتجاهل أي كلام إنشائي أو بسملة لا علاقة لها"
-                                " باللوحات."
-                            ),
-                        },
-                        {"role": "user", "content": transcription},
-                    ],
-                    model="mixtral-8x7b-32768",
-                )
-                ai_text = chat_completion.choices[0].message.content
+                raw_text = transcription
             except Exception as e:
-                st.error(f"حدث خطأ أثناء المعالجة: {e}")
-                ai_text = ""
+                st.error(f"حدث خطأ أثناء الاتصال: {e}")
+                raw_text = ""
 
-        if ai_text:
-            with st.spinner("📊 جاري بناء جدول Excel الاحترافي..."):
-                df = process_ai_text(ai_text)
+        if raw_text:
+            with st.spinner("📊 جاري فرز اللوحات وبناء جدول Excel الاحترافي..."):
+                df = parse_raw_text(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
             st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
