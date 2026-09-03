@@ -1,6 +1,4 @@
 streamlit
-openai-whisper
-openpyxl
-pandas
-setuptools
 groq
+pandas
+openpyxl
