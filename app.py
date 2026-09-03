@@ -12,52 +12,56 @@ st.set_page_config(
 )
 
 
-# 1. تنظيف النص المستخرج من الذكاء الاصطناعي وترتيب الأعمدة
-def process_ai_response(ai_text):
+# 1. تحليل وتنسيق النص البرمجي مباشرة بدون نماذج دردشة خارجية
+def parse_transcription_text(raw_text):
     rows = []
-    lines = ai_text.strip().split("\n")
     current_site = ""
+    last_written_site = None
+
+    # تقسيم النص المفرغ إلى أسطر أو جمل بناءً على المسافات أو علامات التوقف
+    lines = raw_text.replace(".", "\n").split("\n")
 
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
-        # إذا كانت السطر يعبر عن موقع جديد
-        site_match = re.search(r"موقع\s*(\d+)", line)
+        # البحث عن رقم الموقع
+        site_match = re.search(r"(?:موقع|رقم)\s*(\d+)", line)
         if site_match:
             current_site = site_match.group(1)
-            continue
+            # إذا ظهر موقع جديد، نجعله يظهر في أول سيارة تتبعه
+            if current_site != last_written_site:
+                last_written_site = None
 
-        # استخراج الأرقام وحدها
-        nums = "".join(re.findall(r"\d+", line))
-        # استخراج الحروف العربية وحدها
-        letters = "".join(
-            re.findall(
-                r"[\u0600-\u06FF]",
-                re.sub(
-                    r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
-                    "",
-                    line,
-                ),
-            )
+        # استخراج الأرقام الخاصة باللوحة
+        numbers = "".join(re.findall(r"\d+", line))
+        # إزالة الكلمات المفتاحية لتبقى الحروف الأصلية فقط
+        cleaned_letters_text = re.sub(
+            r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
+            " ",
+            line,
         )
+        cleaned_letters_text = re.sub(r"[أإآ]", "ا", cleaned_letters_text)
+        cleaned_letters_text = cleaned_letters_text.replace("هـ", "ه")
 
-        plate = letters + nums if (letters or nums) else ""
+        letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters_text))
 
-        # استخراج الملاحظات والتصنيفات
+        plate = letters + numbers if (letters or numbers) else ""
+
+        # استخراج التصنيفات والملاحظات
         notes = []
         if "نقل" in line:
             notes.append("ن")
         if "تاكسي" in line:
             notes.append("ت")
-        if "باء" in line:
+        if "باء" in line or "حرف الباء" in line:
             notes.append("ب")
-        if "ميم" in line:
+        if "ميم" in line or "حرف الميم" in line:
             notes.append("م")
-        if "فاء" in line:
+        if "فاء" in line or "حرف الفاء" in line:
             notes.append("ف")
-        if "راء" in line:
+        if "راء" in line or "حرف الراء" in line:
             notes.append("ر")
         if "مربع" in line:
             notes.append("مربع")
@@ -66,31 +70,20 @@ def process_ai_response(ai_text):
 
         classification = " ".join(notes) if notes else ""
 
-        if plate:
+        # إضافة السطر إذا وجدنا لوحة أو أرقام
+        if plate and len(plate) > 2:
+            site_val = ""
+            if current_site and last_written_site != current_site:
+                site_val = current_site
+                last_written_site = current_site  # كتابة الموقع مرة واحدة فقط
+
             rows.append({
                 "plate": plate,
-                "site": current_site,
+                "site": site_val,
                 "classification": classification,
             })
-            # مسح رقم الموقع حتى لا يتكرر للسيارات التالية في نفس الموقع إلا إذا تغير
-            # (نتركه يظهر أول مرة فقط كما طلبتِ)
 
-    # جعل رقم الموقع يظهر أول مرة فقط لكل مجموعة متتالية
-    seen_sites = set()
-    final_rows = []
-    for r in rows:
-        s = r["site"]
-        if s and s not in seen_sites:
-            seen_sites.add(s)
-            # احتفظ بالموقع لأول سيارة
-            final_rows.append(r)
-        else:
-            # افرغ الموقع للسيارات التالية في نفس الموقع
-            r_copy = r.copy()
-            r_copy["site"] = ""
-            final_rows.append(r_copy)
-
-    return pd.DataFrame(final_rows)
+    return pd.DataFrame(rows)
 
 
 # 2. بناء ملف Excel المنسق (يمين لليسار، 3 أعمدة)
@@ -157,7 +150,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بالذكاء الاصطناعي..."):
+        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بدقة عالية..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -167,35 +160,16 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-
-                # استخدام نموذج لاما المتاح والسريع لتحليل النص وترتيبه بأسطر مستقلة
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "أنت مساعد ذكي متخصص في تنظيم تفريغ لوحات"
-                                " السيارات السودانية. قم بتحليل النص المرفق"
-                                " وافصله إلى أسطر. كل سطر يجب أن يحتوي على رقم"
-                                " الموقع (عند ذكره)، حروف وأرقام اللوحة،"
-                                " والملاحظات (نقل، تاكسي، حرف الباء، الخ). اكتب"
-                                " كل سيارة في سطر مستقل."
-                            ),
-                        },
-                        {"role": "user", "content": transcription},
-                    ],
-                    model="llama-3.1-8b-instant",
-                )
-                ai_formatted_text = chat_completion.choices[0].message.content
+                raw_text = transcription
             except Exception as e:
-                st.error(f"حدث خطأ أثناء المعالجة: {e}")
-                ai_formatted_text = ""
+                st.error(f"حدث خطأ أثناء الاتصال: {e}")
+                raw_text = ""
 
-        if ai_formatted_text:
+        if raw_text:
             with st.spinner(
-                "📊 جاري تنظيم البيانات في جدول Excel احترافي..."
+                "📊 جاري تنظيم البيانات واستخراج جدول Excel الاحترافي..."
             ):
-                df = process_ai_response(ai_formatted_text)
+                df = parse_transcription_text(raw_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
             st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
