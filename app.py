@@ -27,7 +27,7 @@ def process_with_gemini(api_key, raw_text):
     )
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash", contents=prompt
+            model="gemini-3.6-flash", contents=prompt
         )
         return response.text if response and response.text else ""
     except Exception as e:
@@ -173,9 +173,9 @@ if uploaded_file is not None and gemini_api_key:
                     "اكتب النص المفرغ مباشرة دون مقدمات."
                 )
 
-                # استخدام نموذج gemini-2.0-flash المعتمد والمستقر للوسائط
+                # استخدام نموذج gemini-3.6-flash الموصى به رسمياً في الخطأ
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash", contents=[audio_file, prompt]
+                    model="gemini-3.6-flash", contents=[audio_file, prompt]
                 )
                 raw_text = response.text if response and response.text else ""
 
