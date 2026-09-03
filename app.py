@@ -11,26 +11,32 @@ st.set_page_config(
 )
 
 
+# دالة تحليل النص واستخراج اللوحات بذكاء عبر Gemini
 def process_with_gemini(api_key, raw_text):
     client = genai.Client(api_key=api_key)
     prompt = (
         "أنت مساعد ذكاء اصطناعي متخصص في تنسيق واستخراج لوحات السيارات السودانية بدقة تامة.\n"
-        "لديك نص مفرغ من تسجيل صوتي يحتوي على أرقام مواقع، أرقام لوحات، حروف متداخلة، وملاحظات (مثل نقل، تاكسي).\n"
+        "النص أدناه مفرغ من تسجيل صوتي يحتوي على أرقام مواقع، أرقام لوحات، حروف متداخلة، وملاحظات (مثل نقل، تاكسي).\n"
         "مهمتك:\n"
-        "1. فك التداخل واستخراج كل لوحة سيارة بشكل منظم (مثال: أ ب 4567).\n"
+        "1. فك التداخل واستخراج كل لوحة سيارة بشكل منظم وثابت (مثال: أ ب 4567).\n"
         "2. استخراج رقم الموقع الصحيح.\n"
         "3. استخراج التصنيف والملاحظات.\n"
         "أعطني النتيجة حصراً في أسطر مفصولة بالرمز | بهذا الترتيب لكل سيارة:\n"
         "رقم الموقع | حروف وأرقام اللوحة | التصنيف والملاحظات\n"
-        "لا تضف أي مقدمات أو شرح، فقط الأسطر المطلوبة.\n\n"
+        "لا تضف أي مقدمات أو شرح، فقط الأسطر المطلوبة بالصيغة المحددة.\n\n"
         f"النص:\n{raw_text}"
     )
-    response = client.models.generate_content(
-        model="gemini-2.5-flash", contents=prompt
-    )
-    return response.text if response and response.text else ""
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt
+        )
+        return response.text if response and response.text else ""
+    except Exception as e:
+        st.error(f"خطأ في الاتصال بـ Gemini: {e}")
+        return ""
 
 
+# تنظيم البيانات في جدول مع خطة بديلة لضمان عدم خروج الملف فارغاً
 def create_dataframe(ai_output, raw_text=""):
     rows = []
     lines = ai_output.strip().split("\n")
@@ -85,6 +91,7 @@ def create_dataframe(ai_output, raw_text=""):
     return pd.DataFrame(final_rows)
 
 
+# توليد ملف إكسيل منسق واحترافي
 def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -133,27 +140,71 @@ def generate_excel(df, output_filename="تفريغ_اللوحات.xlsx"):
     return output_filename
 
 
-st.title("🚗 تفريغ لوحات السيارات (مدعوم بـ Gemini)")
+# --- الواجهة التفاعلية ---
+st.title("🚗 تفريغ لوحات السيارات")
+st.write(
+    "ارفعي ملف التسجيل الصوتي أو الريكورد، وأدخلي مفتاح Gemini API للحصول على جدول Excel منظم."
+)
+
 gemini_api_key = st.text_input(
     "أدخلي مفتاح Gemini API الخاص بك:", type="password"
 )
-uploaded_text = st.text_area(
-    "أو الصقي النص الخام هنا مباشرة للمعالجة السريعة:"
+uploaded_file = st.file_uploader(
+    "اختاري ملف الصوت (ملاحظة: يمكنك رفع الريكوردات مباشرة):",
+    type=["m4a", "mp3", "wav", "ogg", "aac", "mp4"],
 )
 
-if gemini_api_key and uploaded_text:
-    if st.button("معالجة وتوليد Excel"):
-        with st.spinner("جاري التحليل والترتيب..."):
-            ai_out = process_with_gemini(gemini_api_key, uploaded_text)
-            df = create_dataframe(ai_out, uploaded_text)
-            file_path = generate_excel(df)
+if uploaded_file is not None and gemini_api_key:
+    # حفظ الملف الصوتي مؤقتاً
+    with open("temp_audio.file", "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-        st.success("تم بنجاح!")
-        st.dataframe(df)
-        with open(file_path, "rb") as f:
-            st.download_button(
-                "تحميل ملف Excel",
-                f,
-                file_name="تفريغ_اللوحات.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    if st.button("بدء تفريغ ومعالجة الصوت"):
+        with st.spinner("🎤 جاري رفع وتحليل الصوت عبر نموذج Gemini..."):
+            try:
+                client = genai.Client(api_key=gemini_api_key)
+                # رفع الملف الصوتي مباشرة لـ Gemini
+                audio_file = client.files.upload(file="temp_audio.file")
+
+                prompt = (
+                    "أنت خبير تفريغ صوتي دقيق جداً.\n"
+                    "قم بتفريغ هذا التسجيل الصوتي كاملاً بالحرف وباللهجة السودانية، مع التركيز على مواقع وأرقام لوحات السيارات.\n"
+                    "اكتب النص المفرغ مباشرة دون مقدمات."
+                )
+
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash", contents=[audio_file, prompt]
+                )
+                raw_text = response.text if response and response.text else ""
+
+                # تنظيف الملف المرفوع من سيرفرات جوجل بعد الانتهاع
+                client.files.delete(name=audio_file.name)
+            except Exception as e:
+                st.error(f"حدث خطأ أثناء معالجة الملف الصوتي: {e}")
+                raw_text = ""
+
+        if raw_text:
+            with st.expander("📄 اضغطي هنا لعرض النص الخام المُفرغ من الصوت"):
+                st.write(raw_text)
+
+            with st.spinner("📊 جاري تنظيم البيانات وترتيبها في Excel..."):
+                ai_out = process_with_gemini(gemini_api_key, raw_text)
+                df = create_dataframe(ai_out, raw_text)
+                excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
+
+            st.success("✅ تمت المعالجة بنجاح!")
+            st.dataframe(df)
+
+            with open(excel_file, "rb") as f:
+                st.download_button(
+                    label="📥 تحميل ملف Excel الجاهز",
+                    data=f,
+                    file_name="تفريغ_اللوحات.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+        else:
+            st.error(
+                "تعذر استخراج النص من الصوت. تأكدي من صحة المفتاح أو وضوح التسجيل."
             )
+elif uploaded_file is not None and not gemini_api_key:
+    st.warning("⚠️ الرجاء إدخال مفتاح Gemini API في الخانة بالأعلى أولاً.")
