@@ -12,65 +12,48 @@ st.set_page_config(
 )
 
 
-# تنظيف النص واستخراج اللوحات بفلترة الكلمات الزائدة
-def parse_transcription_text(raw_text):
+# معالجة وتنظيم النص القادم من الذكاء الاصطناعي
+def process_ai_text(ai_text):
     rows = []
     current_site = ""
     last_written_site = None
 
-    # تقسيم النص إلى أسطر أو جمل
-    lines = raw_text.replace(".", "\n").split("\n")
-
+    lines = ai_text.strip().split("\n")
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
-        # استبعاد الكلمات الإنشائية والبسملة التي لا علاقة لها باللوحات
-        if any(
-            bad_word in line
-            for bad_word in [
-                "بسم",
-                "الله",
-                "الرحمن",
-                "الرحيم",
-                "السلام",
-                "عليكم",
-                "مرحباً",
-            ]
-        ):
+        # البحث عن رقم الموقع
+        site_match = re.search(r"(?:موقع|رقم)?\s*(\d+)", line)
+        # التأكد أن الرقم يمثل موقع وليس رقم لوحة عشوائي
+        if "موقع" in line or "رقم الموقع" in line:
+            if site_match:
+                current_site = site_match.group(1)
+                if current_site != last_written_site:
+                    last_written_site = None
             continue
 
-        # البحث عن رقم الموقع الجديد
-        site_match = re.search(r"(?:موقع|رقم)\s*(\d+)", line)
-        if site_match:
-            current_site = site_match.group(1)
-            if current_site != last_written_site:
-                last_written_site = None
-            continue
-
-        # استخراج الأرقام وحدها
+        # استخراج الأرقام وحدها للوحة
         numbers = "".join(re.findall(r"\d+", line))
 
-        # تنظيف النص لاستخراج الحروف الأصلية فقط واستبعاد الكلمات المفتاحية
-        cleaned_letters_text = re.sub(
+        # استخراج وتنقيه الحروف
+        cleaned_letters = re.sub(
             r"(موقع|رقم|نقل|تاكسي|شقق|مربع|حرف|الباء|الميم|الفاء|الراء|باء|ميم|فاء|راء|\d+)",
             " ",
             line,
         )
-        cleaned_letters_text = re.sub(r"[أإآ]", "ا", cleaned_letters_text)
-        cleaned_letters_text = cleaned_letters_text.replace("هـ", "ه")
+        cleaned_letters = re.sub(r"[أإآ]", "ا", cleaned_letters)
+        cleaned_letters = cleaned_letters.replace("هـ", "ه")
+        letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters))
 
-        letters = "".join(re.findall(r"[\u0600-\u06FF]", cleaned_letters_text))
-
-        # دمج الحروف والأرقام لتكوين اللوحة
         plate = letters + numbers if (letters or numbers) else ""
 
-        # استخراج التصنيفات والملاحظات بدقة
+        # استخراج الملاحظات والتصنيفات
         notes = []
-        if "نقل" in line:
+        if "نقل" in line or " ن " in line:
             notes.append("ن")
-        if "تاكسي" in line:
+        if "تاكسي" in line or " ت " in line:
             notes.append("ت")
         if "باء" in line or "حرف الباء" in line:
             notes.append("ب")
@@ -87,7 +70,6 @@ def parse_transcription_text(raw_text):
 
         classification = " ".join(notes) if notes else ""
 
-        # اشتراط أن تحتوي اللوحة على أرقام أو حروف حقيقية لتفادي النصوص العشوائية
         if plate and len(numbers) >= 2:
             site_val = ""
             if current_site and last_written_site != current_site:
@@ -167,7 +149,7 @@ if uploaded_file is not None and groq_api_key:
         f.write(uploaded_file.getbuffer())
 
     if st.button("بدء التفريغ والاستخراج"):
-        with st.spinner("🎤 جاري تفريغ الصوت وفلترة البيانات بنجاح..."):
+        with st.spinner("🎤 جاري تفريغ الصوت وتحليله بذكاء..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 with open("temp_audio_file.m4a", "rb") as file:
@@ -177,14 +159,34 @@ if uploaded_file is not None and groq_api_key:
                         language="ar",
                         response_format="text",
                     )
-                raw_text = transcription
-            except Exception as e:
-                st.error(f"حدث خطأ أثناء الاتصال: {e}")
-                raw_text = ""
 
-        if raw_text:
-            with st.spinner("📊 جاري ترتيب البيانات واستخراج ملف Excel..."):
-                df = parse_transcription_text(raw_text)
+                # استخدام نموذج Mixtral المستقر لتنظيم النص وفصل اللوحات
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "أنت مساعد ذكي متخصص في تنظيم تفريغ لوحات"
+                                " السيارات السودانية. النص المرفق هو تفريغ صوتي"
+                                " يحتوي على أرقام مواقع (مثل موقع 5603)"
+                                " ولوحات سيارات وملاحظات. قم باستخراج وترتيب"
+                                " كل سيارة في سطر مستقل مع ذكر رقم الموقع إذا وجد،"
+                                " وتجاهل أي كلام إنشائي أو بسملة لا علاقة لها"
+                                " باللوحات."
+                            ),
+                        },
+                        {"role": "user", "content": transcription},
+                    ],
+                    model="mixtral-8x7b-32768",
+                )
+                ai_text = chat_completion.choices[0].message.content
+            except Exception as e:
+                st.error(f"حدث خطأ أثناء المعالجة: {e}")
+                ai_text = ""
+
+        if ai_text:
+            with st.spinner("📊 جاري بناء جدول Excel الاحترافي..."):
+                df = process_ai_text(ai_text)
                 excel_file = generate_excel(df, "تفريغ_اللوحات.xlsx")
 
             st.success("✅ تمت المعالجة بنجاح! حملي الملف من الزر بالأسفل:")
